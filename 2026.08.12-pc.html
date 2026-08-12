@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>電腦 AI 主控端 - 3D 穴位 AR 系統</title>
   
-  <!-- 1. 載入 MediaPipe 官方 AI JS 庫 (全在電腦上跑) -->
+  <!-- 1. 載入 MediaPipe 官方 AI JS 庫 -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 
-  <!-- 2. 載入 PeerJS 通訊與 QR Code 套件 -->
+  <!-- 2. 載入 PeerJS 通訊與正確的 QRCode.js 套件 (修正此處 CDN) -->
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
   <style>
     * { box-sizing: border-box; }
@@ -31,7 +31,7 @@
       display: flex; align-items: center; justify-content: center;
       position: relative;
     }
-    video { display: none; } /* 隱藏原始 video，改繪製到 canvas */
+    video { display: none; }
     canvas { width: 100%; height: 100%; object-fit: contain; }
 
     .status-overlay {
@@ -54,8 +54,9 @@
     .qrcode-box {
       background: #FFF; padding: 12px; border-radius: 12px;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
+      min-height: 220px;
     }
-    #qrcode { width: 180px; height: 180px; }
+    #qrcode img, #qrcode canvas { width: 180px !important; height: 180px !important; }
     .room-id-text { color: #000; font-weight: bold; margin-top: 8px; font-size: 16px; }
 
     .btn {
@@ -67,19 +68,16 @@
     .btn-toggle:hover { background-color: #00E6B8; }
     .btn-reset { background-color: #FFCC00; color: #000; }
     .btn-reset:hover { background-color: #E6B800; }
-    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
   </style>
 </head>
 <body>
 
-  <!-- 左側：接收手機串流並由電腦渲染 AI AR 畫面 -->
   <div class="display-panel">
     <div class="status-overlay" id="status_text">🔴 等待手機鏡頭連線...</div>
     <video id="remote_video" autoplay playsinline></video>
     <canvas id="output_canvas"></canvas>
   </div>
 
-  <!-- 右側：中控按鈕與連線資訊 -->
   <div class="control-panel">
     <h2 class="panel-title">🖥️ 電腦 AI 運算中控台</h2>
     
@@ -108,7 +106,6 @@
     let dataConnection = null;
     let isProcessing = false;
 
-    // 自適應畫布解析度
     function resizeCanvas() {
       canvasElement.width = canvasElement.clientWidth * (window.devicePixelRatio || 1);
       canvasElement.height = canvasElement.clientHeight * (window.devicePixelRatio || 1);
@@ -122,8 +119,19 @@
     const peer = new Peer(roomId);
 
     peer.on('open', (id) => {
-      const mobileUrl = `${window.location.origin}${window.location.pathname.replace('pc.html', 'mobile.html')}?room=${id}`;
-      new QRCode(document.getElementById("qrcode"), { text: mobileUrl, width: 180, height: 180 });
+      // 相容日期命名格式，自動將網址中的 -pc 或 pc.html 轉換為對應的手機檔名
+      const baseUrl = window.location.origin + window.location.pathname;
+      const mobileBaseUrl = baseUrl.replace('-pc', '-mobile').replace('pc.html', 'mobile.html');
+      const mobileUrl = `${mobileBaseUrl}?room=${id}`;
+
+      // 清空舊容器並重新渲染 QR Code
+      const qrContainer = document.getElementById("qrcode");
+      qrContainer.innerHTML = "";
+      new QRCode(qrContainer, {
+        text: mobileUrl,
+        width: 180,
+        height: 180
+      });
     });
 
     peer.on('connection', (conn) => {
@@ -131,7 +139,6 @@
       statusText.textContent = "🟡 手機已對接，等待視訊畫面...";
     });
 
-    // 接收手機傳來的【原始影像串流】
     peer.on('call', (call) => {
       call.answer();
       call.on('stream', (remoteStream) => {
@@ -142,7 +149,7 @@
       });
     });
 
-    // 2. 🛡️ 電腦端 468 點全網格抗抖動平滑器
+    // 2. 電腦端 468 點全網格抗抖動平滑器
     let smoothedLandmarks = null;
     function applyFullMeshSmoothing(rawLandmarks) {
       if (!smoothedLandmarks || smoothedLandmarks.length !== rawLandmarks.length) {
@@ -160,7 +167,7 @@
       return smoothedLandmarks;
     }
 
-    // 3. 電腦端的 AI 渲染結果繪製
+    // 3. AI AR 繪製邏輯
     function onResults(results) {
       const cw = canvasElement.width, ch = canvasElement.height;
       const dpr = window.devicePixelRatio || 1;
@@ -182,7 +189,6 @@
         offsetX = 0; offsetY = (ch - renderH) / 2;
       }
 
-      // 繪製來自手機的影像 (鏡像翻轉)
       canvasCtx.translate(cw, 0);
       canvasCtx.scale(-1, 1);
       canvasCtx.drawImage(results.image, cw - offsetX - renderW, offsetY, renderW, renderH);
@@ -202,7 +208,6 @@
           y: Math.round(offsetY + landmarks[idx].y * renderH)
         });
 
-        // 11 個穴位幾何算法
         const yintang = getPt(6);
         const qingming_L = getPt(133), qingming_R = getPt(362);
         const zanzhu_L = getPt(55), zanzhu_R = getPt(285);
@@ -271,14 +276,12 @@
       canvasCtx.restore();
     }
 
-    // 4. 初始化電腦端 MediaPipe 辨識器
     const faceMesh = new FaceMesh({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
     faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
     faceMesh.onResults(onResults);
 
-    // 5. 影音送運算 Frame 循環
     async function processFrame() {
       if (!remoteVideo.paused && !remoteVideo.ended && remoteVideo.readyState >= 2) {
         if (!isProcessing) {
@@ -290,7 +293,6 @@
       requestAnimationFrame(processFrame);
     }
 
-    // UI 控制邏輯
     btnToggle.addEventListener('click', () => {
       showLabels = !showLabels;
       btnToggle.textContent = showLabels ? "隱藏穴位標籤" : "顯示穴位標籤";
