@@ -190,12 +190,19 @@
       const canvasAspect = cw / ch, imgAspect = vw / vh;
       let renderW, renderH, offsetX, offsetY;
 
+      // ⚡ 修復比例：嚴格採用 Contain 邏輯，完整顯示直向畫面不裁切
       if (imgAspect > canvasAspect) {
-        renderH = ch; renderW = vw * (ch / vh);
-        offsetX = (cw - renderW) / 2; offsetY = 0;
+        // 畫面較寬，以寬度為基準
+        renderW = cw;
+        renderH = cw / imgAspect;
+        offsetX = 0;
+        offsetY = (ch - renderH) / 2;
       } else {
-        renderW = cw; renderH = vh * (cw / vw);
-        offsetX = 0; offsetY = (ch - renderH) / 2;
+        // 手機直向 9:16 畫面，以高度為基準
+        renderH = ch;
+        renderW = ch * imgAspect;
+        offsetX = (cw - renderW) / 2;
+        offsetY = 0;
       }
 
       canvasCtx.translate(cw, 0);
