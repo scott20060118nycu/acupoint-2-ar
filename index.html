@@ -110,16 +110,15 @@
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    // 1. 先生成房號與手機網址
+    // 1. 生成房號
     const roomId = 'acu-' + Math.floor(1000 + Math.random() * 9000);
     roomIdDisplay.textContent = `房號：${roomId}`;
 
-    // 自動替換檔名：將 -pc 或 -pc.html 替換成 -mobile / -mobile.html
-    let currentPath = window.location.pathname;
-    let mobilePath = currentPath.replace('-pc', '-mobile');
-    const mobileUrl = `${window.location.origin}${mobilePath}?room=${roomId}`;
+    // 2. ⚡ 自動取得同目錄下的 mobile.html 網址
+    const basePath = window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'));
+    const mobileUrl = `${window.location.origin}${basePath}/mobile.html?room=${roomId}`;
 
-    // 2. ⚡ 關鍵修復：網頁載入時【立即繪製 QR Code】，不等待 PeerJS 雲端回應！
+    // 3. 立即繪製 QR Code
     function renderQRCode() {
       const qrContainer = document.getElementById("qrcode");
       qrContainer.innerHTML = "";
@@ -132,7 +131,7 @@
     }
     renderQRCode();
 
-    // 3. 初始化 PeerJS 網路連線
+    // 4. 初始化 PeerJS 網路連線
     const peer = new Peer(roomId);
 
     peer.on('open', (id) => {
@@ -159,7 +158,7 @@
       });
     });
 
-    // 4. 全網格抗抖動平滑器
+    // 5. 全網格抗抖動平滑器
     let smoothedLandmarks = null;
     function applyFullMeshSmoothing(rawLandmarks) {
       if (!smoothedLandmarks || smoothedLandmarks.length !== rawLandmarks.length) {
@@ -177,7 +176,7 @@
       return smoothedLandmarks;
     }
 
-    // 5. MediaPipe AI 繪製
+    // 6. MediaPipe AI 繪製
     function onResults(results) {
       const cw = canvasElement.width, ch = canvasElement.height;
       const dpr = window.devicePixelRatio || 1;
@@ -223,7 +222,7 @@
         const zanzhu_L = getPt(55), zanzhu_R = getPt(285);
         const yuyao_L = getPt(105), yuyao_R = getPt(334);
         const in_L = getPt(133), out_L = getPt(33);
-        const tongzi_L = { x: Math.round(out_L.x + 0.35 * (out_L.x - in_L.x)), y: Math.round(out_L.y + 0.35 * (out_L.y - in_R.y)) };
+        const tongzi_L = { x: Math.round(out_L.x + 0.35 * (out_L.x - in_L.x)), y: Math.round(out_L.y + 0.35 * (out_L.y - in_L.y)) };
         const in_R = getPt(362), out_R = getPt(263);
         const tongzi_R = { x: Math.round(out_R.x + 0.35 * (out_R.x - in_R.x)), y: Math.round(out_R.y + 0.35 * (out_R.y - in_R.y)) };
         const nose = getPt(1);
