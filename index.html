@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>電腦 AI 主控端 - 3D 穴位 AR 系統</title>
+  <title>穴位計算-電腦主控端</title>
   
   <!-- 1. MediaPipe AI 庫 -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -76,7 +76,7 @@
   </div>
 
   <div class="control-panel">
-    <h2 class="panel-title">🖥️ 電腦 AI 運算中控台</h2>
+    <h2 class="panel-title">電腦運算中控台</h2>
     
     <div class="qrcode-box">
       <div id="qrcode"></div>
@@ -87,7 +87,7 @@
     <hr style="border: 0.5px solid #333; width: 100%;">
 
     <button id="btn_toggle" class="btn btn-toggle">隱藏穴位標籤</button>
-    <button id="btn_reset" class="btn btn-reset">🔄 要求手機重新推流</button>
+    <button id="btn_reset" class="btn btn-reset">🔄 手機鏡頭刷新</button>
   </div>
 
   <script>
@@ -114,7 +114,7 @@
     const roomId = 'acu-' + Math.floor(1000 + Math.random() * 9000);
     roomIdDisplay.textContent = `房號：${roomId}`;
 
-    // 2. ⚡ 自動取得同目錄下的 mobile.html 網址
+    // 2. 自動取得同目錄下的 mobile.html 網址
     const basePath = window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'));
     const mobileUrl = `${window.location.origin}${basePath}/mobile.html?room=${roomId}`;
 
