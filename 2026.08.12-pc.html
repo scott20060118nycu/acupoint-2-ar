@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>電腦 AI 主控端 - 3D 穴位 AR 系統</title>
   
-  <!-- 1. 載入 MediaPipe 官方 AI JS 庫 -->
+  <!-- 1. MediaPipe AI 庫 -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 
-  <!-- 2. 載入 PeerJS 通訊與正確的 QRCode.js 套件 (修正此處 CDN) -->
+  <!-- 2. PeerJS 與 QRCode.js -->
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
@@ -19,12 +19,11 @@
     body {
       margin: 0; padding: 0;
       width: 100vw; height: 100vh;
-      background-color: #121212;
-      color: #FFF; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #121212; color: #FFF;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       display: flex; flex-direction: row; overflow: hidden;
     }
     
-    /* 左側 AR 影像畫布區 */
     .display-panel {
       flex: 1; height: 100%;
       background-color: #000;
@@ -42,22 +41,20 @@
       z-index: 10;
     }
 
-    /* 右側操作控制面板 */
     .control-panel {
       width: 320px; height: 100%;
-      background-color: #1e1e1e;
-      border-left: 1px solid #333;
+      background-color: #1e1e1e; border-left: 1px solid #333;
       padding: 24px; display: flex; flex-direction: column;
       gap: 20px; z-index: 20;
     }
     .panel-title { font-size: 20px; font-weight: bold; color: #00FFCC; margin: 0; }
     .qrcode-box {
-      background: #FFF; padding: 12px; border-radius: 12px;
+      background: #FFF; padding: 16px; border-radius: 12px;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      min-height: 220px;
+      min-height: 230px;
     }
     #qrcode img, #qrcode canvas { width: 180px !important; height: 180px !important; }
-    .room-id-text { color: #000; font-weight: bold; margin-top: 8px; font-size: 16px; }
+    .room-id-text { color: #000; font-weight: bold; margin-top: 10px; font-size: 16px; }
 
     .btn {
       width: 100%; padding: 14px; border-radius: 10px; border: none;
@@ -83,7 +80,7 @@
     
     <div class="qrcode-box">
       <div id="qrcode"></div>
-      <div class="room-id-text" id="room_id_display">配對碼生成中...</div>
+      <div class="room-id-text" id="room_id_display">生成中...</div>
     </div>
     <p style="font-size: 12px; color: #AAA; margin: 0; text-align: center;">請用手機掃描 QR Code 開啟相機</p>
 
@@ -113,25 +110,38 @@
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    // 1. 初始化 WebRTC 連線
+    // 1. 先生成房號與手機網址
     const roomId = 'acu-' + Math.floor(1000 + Math.random() * 9000);
     roomIdDisplay.textContent = `房號：${roomId}`;
-    const peer = new Peer(roomId);
 
-    peer.on('open', (id) => {
-      // 相容日期命名格式，自動將網址中的 -pc 或 pc.html 轉換為對應的手機檔名
-      const baseUrl = window.location.origin + window.location.pathname;
-      const mobileBaseUrl = baseUrl.replace('-pc', '-mobile').replace('pc.html', 'mobile.html');
-      const mobileUrl = `${mobileBaseUrl}?room=${id}`;
+    // 自動替換檔名：將 -pc 或 -pc.html 替換成 -mobile / -mobile.html
+    let currentPath = window.location.pathname;
+    let mobilePath = currentPath.replace('-pc', '-mobile');
+    const mobileUrl = `${window.location.origin}${mobilePath}?room=${roomId}`;
 
-      // 清空舊容器並重新渲染 QR Code
+    // 2. ⚡ 關鍵修復：網頁載入時【立即繪製 QR Code】，不等待 PeerJS 雲端回應！
+    function renderQRCode() {
       const qrContainer = document.getElementById("qrcode");
       qrContainer.innerHTML = "";
       new QRCode(qrContainer, {
         text: mobileUrl,
         width: 180,
-        height: 180
+        height: 180,
+        correctLevel: QRCode.CorrectLevel.H
       });
+    }
+    renderQRCode();
+
+    // 3. 初始化 PeerJS 網路連線
+    const peer = new Peer(roomId);
+
+    peer.on('open', (id) => {
+      console.log('PeerJS 信號伺服器連線成功，房號:', id);
+    });
+
+    peer.on('error', (err) => {
+      console.error('PeerJS 錯誤:', err);
+      statusText.textContent = "⚠️ 信號伺服器連線延遲，若無法連線請重新整理";
     });
 
     peer.on('connection', (conn) => {
@@ -149,7 +159,7 @@
       });
     });
 
-    // 2. 電腦端 468 點全網格抗抖動平滑器
+    // 4. 全網格抗抖動平滑器
     let smoothedLandmarks = null;
     function applyFullMeshSmoothing(rawLandmarks) {
       if (!smoothedLandmarks || smoothedLandmarks.length !== rawLandmarks.length) {
@@ -167,7 +177,7 @@
       return smoothedLandmarks;
     }
 
-    // 3. AI AR 繪製邏輯
+    // 5. MediaPipe AI 繪製
     function onResults(results) {
       const cw = canvasElement.width, ch = canvasElement.height;
       const dpr = window.devicePixelRatio || 1;
@@ -213,7 +223,7 @@
         const zanzhu_L = getPt(55), zanzhu_R = getPt(285);
         const yuyao_L = getPt(105), yuyao_R = getPt(334);
         const in_L = getPt(133), out_L = getPt(33);
-        const tongzi_L = { x: Math.round(out_L.x + 0.35 * (out_L.x - in_L.x)), y: Math.round(out_L.y + 0.35 * (out_L.y - in_L.y)) };
+        const tongzi_L = { x: Math.round(out_L.x + 0.35 * (out_L.x - in_L.x)), y: Math.round(out_L.y + 0.35 * (out_L.y - in_R.y)) };
         const in_R = getPt(362), out_R = getPt(263);
         const tongzi_R = { x: Math.round(out_R.x + 0.35 * (out_R.x - in_R.x)), y: Math.round(out_R.y + 0.35 * (out_R.y - in_R.y)) };
         const nose = getPt(1);
