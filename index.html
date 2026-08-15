@@ -102,6 +102,7 @@
     let showLabels = true;
     let dataConnection = null;
     let isProcessing = false;
+    let pcAnimationId = null; // 紀錄繪圖動畫迴圈編號
 
     function resizeCanvas() {
       canvasElement.width = canvasElement.clientWidth * (window.devicePixelRatio || 1);
@@ -109,6 +110,29 @@
     }
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
+
+    // 清空電腦端畫面與停止動畫運算
+    function clearPCDisplay() {
+      if (pcAnimationId) {
+        cancelAnimationFrame(pcAnimationId);
+        pcAnimationId = null;
+      }
+
+      if (remoteVideo) {
+        remoteVideo.pause();
+        remoteVideo.srcObject = null;
+        remoteVideo.removeAttribute('src');
+        remoteVideo.load();
+      }
+
+      if (canvasCtx) {
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      }
+
+      smoothedLandmarks = null;
+      isProcessing = false;
+      statusText.textContent = "🔴 等待手機鏡頭連線...";
+    }
 
     // 1. 生成房號
     const roomId = 'acu-' + Math.floor(1000 + Math.random() * 9000);
@@ -146,16 +170,43 @@
     peer.on('connection', (conn) => {
       dataConnection = conn;
       statusText.textContent = "🟡 手機已對接，等待視訊畫面...";
+
+      // 監聽來自手機端的訊息通知
+      conn.on('data', (data) => {
+        if (data && data.type === 'STOP_STREAM') {
+          clearPCDisplay();
+        }
+      });
+
+      conn.on('close', clearPCDisplay);
+      conn.on('error', clearPCDisplay);
     });
 
     peer.on('call', (call) => {
       call.answer();
+
+      // 監聽 WebRTC 連線狀態變化（手機端突然斷線時可立馬偵測）
+      if (call.peerConnection) {
+        call.peerConnection.oniceconnectionstatechange = () => {
+          const state = call.peerConnection.iceConnectionState;
+          if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+            clearPCDisplay();
+          }
+        };
+      }
+
       call.on('stream', (remoteStream) => {
         statusText.textContent = "🟢 成功接收手機影像，電腦 AI 運算中...";
         remoteVideo.srcObject = remoteStream;
         remoteVideo.play();
-        requestAnimationFrame(processFrame);
+        
+        // 先取消前一次的動畫迴圈（若有）
+        if (pcAnimationId) cancelAnimationFrame(pcAnimationId);
+        processFrame();
       });
+
+      call.on('close', clearPCDisplay);
+      call.on('error', clearPCDisplay);
     });
 
     // 5. 全網格抗抖動平滑器
@@ -190,15 +241,12 @@
       const canvasAspect = cw / ch, imgAspect = vw / vh;
       let renderW, renderH, offsetX, offsetY;
 
-      // ⚡ 修復比例：嚴格採用 Contain 邏輯，完整顯示直向畫面不裁切
       if (imgAspect > canvasAspect) {
-        // 畫面較寬，以寬度為基準
         renderW = cw;
         renderH = cw / imgAspect;
         offsetX = 0;
         offsetY = (ch - renderH) / 2;
       } else {
-        // 手機直向 9:16 畫面，以高度為基準
         renderH = ch;
         renderW = ch * imgAspect;
         offsetX = (cw - renderW) / 2;
@@ -306,7 +354,8 @@
           isProcessing = false;
         }
       }
-      requestAnimationFrame(processFrame);
+      // 記錄動畫 ID，確保斷線時可 cancelAnimationFrame 取消
+      pcAnimationId = requestAnimationFrame(processFrame);
     }
 
     btnToggle.addEventListener('click', () => {
