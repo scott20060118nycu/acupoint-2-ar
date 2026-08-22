@@ -83,6 +83,7 @@
       <div class="room-id-text" id="room_id_display">生成中...</div>
     </div>
     <p style="font-size: 12px; color: #AAA; margin: 0; text-align: center;">請用手機掃描 QR Code 開啟相機</p>
+    <p style="font-size: 12px; color: #00FFCC; margin: 0; text-align: center;">💡 提示：請使用綠色圓貼紙進行對位測試</p>
 
     <hr style="border: 0.5px solid #333; width: 100%;">
 
@@ -94,7 +95,7 @@
     const statusText = document.getElementById('status_text');
     const remoteVideo = document.getElementById('remote_video');
     const canvasElement = document.getElementById('output_canvas');
-    const canvasCtx = canvasElement.getContext('2d');
+    const canvasCtx = canvasElement.getContext('2d', { willReadFrequently: true });
     const roomIdDisplay = document.getElementById('room_id_display');
     const btnToggle = document.getElementById('btn_toggle');
     const btnReset = document.getElementById('btn_reset');
@@ -111,24 +112,20 @@
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    // 清空電腦端畫面與停止動畫運算
     function clearPCDisplay() {
       if (pcAnimationId) {
         cancelAnimationFrame(pcAnimationId);
         pcAnimationId = null;
       }
-
       if (remoteVideo) {
         remoteVideo.pause();
         remoteVideo.srcObject = null;
         remoteVideo.removeAttribute('src');
         remoteVideo.load();
       }
-
       if (canvasCtx) {
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
       }
-
       smoothedLandmarks = null;
       isProcessing = false;
       statusText.textContent = "🔴 等待手機鏡頭連線...";
@@ -155,7 +152,7 @@
     }
     renderQRCode();
 
-    // 4. 初始化 PeerJS 網路連線
+    // 4. PeerJS 網路連線
     const peer = new Peer(roomId);
 
     peer.on('open', (id) => {
@@ -172,9 +169,7 @@
       statusText.textContent = "🟡 手機已對接，等待視訊畫面...";
 
       conn.on('data', (data) => {
-        if (data && data.type === 'STOP_STREAM') {
-          clearPCDisplay();
-        }
+        if (data && data.type === 'STOP_STREAM') clearPCDisplay();
       });
 
       conn.on('close', clearPCDisplay);
@@ -187,9 +182,7 @@
       if (call.peerConnection) {
         call.peerConnection.oniceconnectionstatechange = () => {
           const state = call.peerConnection.iceConnectionState;
-          if (state === 'disconnected' || state === 'failed' || state === 'closed') {
-            clearPCDisplay();
-          }
+          if (state === 'disconnected' || state === 'failed' || state === 'closed') clearPCDisplay();
         };
       }
 
@@ -206,7 +199,7 @@
       call.on('error', clearPCDisplay);
     });
 
-    // 5. 全網格抗抖動平滑器
+    // 5. 抗抖動平滑器
     let smoothedLandmarks = null;
     function applyFullMeshSmoothing(rawLandmarks) {
       if (!smoothedLandmarks || smoothedLandmarks.length !== rawLandmarks.length) {
@@ -216,8 +209,7 @@
       const alphaMin = 0.05, alphaMax = 0.88, k = 140;
       for (let i = 0; i < rawLandmarks.length; i++) {
         const raw = rawLandmarks[i], prev = smoothedLandmarks[i];
-        const dx = raw.x - prev.x, dy = raw.y - prev.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
+        const dist = Math.hypot(raw.x - prev.x, raw.y - prev.y);
         const dynamicAlpha = alphaMin + (alphaMax - alphaMin) * Math.exp(-k * dist);
         prev.x = dynamicAlpha * prev.x + (1 - dynamicAlpha) * raw.x;
         prev.y = dynamicAlpha * prev.y + (1 - dynamicAlpha) * raw.y;
@@ -228,7 +220,45 @@
       return smoothedLandmarks;
     }
 
-    // 6. MediaPipe AI 繪製
+    // 🎯 貼紙顏色檢測演算法 (HSV 綠色貼紙識別)
+    function isGreenStickerColor(r, g, b) {
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      const d = max - min;
+      if (max === 0 || d === 0) return false;
+      const s = d / max;
+      const v = max / 255;
+      let h = 0;
+      if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+      else if (max === g) h = (b - r) / d + 2;
+      else if (max === b) h = (r - g) / d + 4;
+      h = (h / 6) * 360;
+
+      // 當像素 Hue 落在 75°~165°（綠色系）且具備一定飽和度與亮度時判定為貼紙
+      return (h >= 75 && h <= 165 && s >= 0.35 && v >= 0.25);
+    }
+
+    function checkStickerDetected(pt, radius = 9) {
+      const dpr = window.devicePixelRatio || 1;
+      const r = Math.round(radius * dpr);
+      try {
+        const imgData = canvasCtx.getImageData(pt.x - r, pt.y - r, r * 2, r * 2);
+        const data = imgData.data;
+        let matchCount = 0;
+        const totalPixels = data.length / 4;
+
+        for (let i = 0; i < data.length; i += 4) {
+          if (isGreenStickerColor(data[i], data[i+1], data[i+2])) {
+            matchCount++;
+          }
+        }
+        // ROI 區域內超過 20% 像素符合貼紙色即判定為成功黏貼
+        return (matchCount / totalPixels) > 0.20;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    // 6. MediaPipe AI 繪製迴圈
     function onResults(results) {
       const cw = canvasElement.width, ch = canvasElement.height;
       const dpr = window.devicePixelRatio || 1;
@@ -250,7 +280,7 @@
         offsetX = 0; offsetY = (ch - renderH) / 2;
       }
 
-      // 水平鏡像繪製
+      // 繪製影像底圖 (鏡像)
       canvasCtx.translate(cw, 0);
       canvasCtx.scale(-1, 1);
       canvasCtx.drawImage(results.image, cw - offsetX - renderW, offsetY, renderW, renderH);
@@ -271,7 +301,7 @@
           y: Math.round(offsetY + landmarks[idx].y * renderH)
         });
 
-        // 取得關鍵基準點
+        // 基準點
         const nose = getPt(1);
         const leftPupil = landmarks[468] ? getPt(468) : getPt(145);
         const rightPupil = landmarks[473] ? getPt(473) : getPt(374);
@@ -280,23 +310,21 @@
         const leftOuterCanthus = getPt(33);
         const rightOuterCanthus = getPt(263);
 
-        // 🔍 轉頭角度與遮蔽判定
+        // 轉頭姿態與遮蔽判定
         const distL = Math.hypot(leftOuterCanthus.x - nose.x, leftOuterCanthus.y - nose.y);
         const distR = Math.hypot(rightOuterCanthus.x - nose.x, rightOuterCanthus.y - nose.y);
         const totalDist = distL + distR || 1;
-
         const ratioL = distL / totalDist;
         const ratioR = distR / totalDist;
 
         const showLeft = ratioL >= 0.32;
         const showRight = ratioR >= 0.32;
 
-        // 📐 中醫同身寸動態校正演算法
+        // 同身寸動態矩陣
         const ipdDistance = Math.hypot(rightPupil.x - leftPupil.x, rightPupil.y - leftPupil.y);
         const innerCanthusDistance = Math.hypot(rightInnerCanthus.x - leftInnerCanthus.x, rightInnerCanthus.y - leftInnerCanthus.y);
         const cunInPixels = ((ipdDistance / 3.0) + innerCanthusDistance) / 2.0;
 
-        // 面部姿態自適應單位向量
         const dx = rightPupil.x - leftPupil.x;
         const dy = rightPupil.y - leftPupil.y;
         const len = Math.hypot(dx, dy) || 1;
@@ -308,13 +336,11 @@
           y: Math.round(anchor.y + (hCun * uH.y + vCun * uV.y) * cunInPixels)
         });
 
-        // 穴位精準位置計算
+        // 穴位座標計算（🚫 已完全移除睛明穴）
         const yintang = {
           x: Math.round((getPt(55).x + getPt(285).x) / 2),
           y: Math.round((getPt(55).y + getPt(285).y) / 2)
         };
-        const qingming_L = offsetByCun(leftInnerCanthus, -0.1, -0.1);
-        const qingming_R = offsetByCun(rightInnerCanthus, 0.1, -0.1);
         const zanzhu_L = { x: Math.round(getPt(55).x), y: Math.round(getPt(55).y) };
         const zanzhu_R = { x: Math.round(getPt(285).x), y: Math.round(getPt(285).y) };
         const yuyao_L = { x: Math.round(getPt(105).x), y: Math.round(getPt(105).y) };
@@ -323,24 +349,32 @@
         const tongzi_R = offsetByCun(rightOuterCanthus, 0.5, 0);
         const sibai_L = offsetByCun(leftPupil, 0, 1.0);
         const sibai_R = offsetByCun(rightPupil, 0, 1.0);
-
-        // 🌟 新增穴位：迎香、地倉、承漿
         const yingxiang_L = getPt(102);
         const yingxiang_R = getPt(331);
         const dicang_L = offsetByCun(getPt(61), -0.4, 0);
         const dicang_R = offsetByCun(getPt(291), 0.4, 0);
         const chengjiang = getPt(18);
 
-        // 標籤與穴位畫點函數
+        // 🎨 穴位繪製與紅/藍轉換判定
         const drawPoint = (label, pt) => {
+          // 採樣底圖，判斷是否已貼上貼紙
+          const isAttached = checkStickerDetected(pt);
+
+          // 未黏貼：紅色；已黏貼：藍色
+          const pointColor = isAttached ? '#0099FF' : '#FF0055';
+          const auraColor  = isAttached ? 'rgba(0, 153, 255, 0.35)' : 'rgba(255, 0, 85, 0.35)';
+          const textLabel  = isAttached ? `${label} ✓` : label;
+
+          // 外圈擴散光芒
           canvasCtx.beginPath();
-          canvasCtx.arc(pt.x, pt.y, 12 * dpr, 0, 2 * Math.PI);
-          canvasCtx.fillStyle = 'rgba(255, 0, 85, 0.35)';
+          canvasCtx.arc(pt.x, pt.y, 13 * dpr, 0, 2 * Math.PI);
+          canvasCtx.fillStyle = auraColor;
           canvasCtx.fill();
 
+          // 中心實心點
           canvasCtx.beginPath();
-          canvasCtx.arc(pt.x, pt.y, 5.5 * dpr, 0, 2 * Math.PI);
-          canvasCtx.fillStyle = '#FF0055';
+          canvasCtx.arc(pt.x, pt.y, 6 * dpr, 0, 2 * Math.PI);
+          canvasCtx.fillStyle = pointColor;
           canvasCtx.fill();
 
           canvasCtx.lineWidth = 2 * dpr;
@@ -354,17 +388,19 @@
 
             const fontSize = Math.round(14 * dpr);
             canvasCtx.font = `bold ${fontSize}px Arial, sans-serif`;
-            const textWidth = canvasCtx.measureText(label).width;
+            const textWidth = canvasCtx.measureText(textLabel).width;
             const paddingX = 8 * dpr, paddingY = 5 * dpr, offsetY = 14 * dpr;
 
-            canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+            // 標籤底色（已貼貼紙用深藍底，未貼用黑色底）
+            canvasCtx.fillStyle = isAttached ? 'rgba(0, 40, 90, 0.85)' : 'rgba(0, 0, 0, 0.75)';
             canvasCtx.beginPath();
             canvasCtx.roundRect(-textWidth / 2 - paddingX, -fontSize - offsetY - (paddingY / 2), textWidth + (paddingX * 2), fontSize + paddingY, 5 * dpr);
             canvasCtx.fill();
 
-            canvasCtx.fillStyle = '#00FFCC';
+            // 文字顏色（已貼顯示天藍，未貼顯示青綠）
+            canvasCtx.fillStyle = isAttached ? '#66CCFF' : '#00FFCC';
             canvasCtx.textAlign = 'center';
-            canvasCtx.fillText(label, 0, -offsetY);
+            canvasCtx.fillText(textLabel, 0, -offsetY);
             canvasCtx.restore();
           }
         };
@@ -377,7 +413,6 @@
 
         // 左側穴位
         if (showLeft) {
-          drawPoint("Qingming_L", qingming_L);
           drawPoint("Zanzhu_L", zanzhu_L);
           drawPoint("Yuyao_L", yuyao_L);
           drawPoint("Tongziliao_L", tongzi_L);
@@ -388,7 +423,6 @@
 
         // 右側穴位
         if (showRight) {
-          drawPoint("Qingming_R", qingming_R);
           drawPoint("Zanzhu_R", zanzhu_R);
           drawPoint("Yuyao_R", yuyao_R);
           drawPoint("Tongziliao_R", tongzi_R);
